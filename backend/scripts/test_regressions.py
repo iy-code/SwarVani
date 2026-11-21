@@ -1,6 +1,7 @@
 """Offline API and voice regressions: python -m unittest scripts.test_regressions -v."""
 import asyncio
 from dataclasses import replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,11 +14,48 @@ from app.gnani import parse_stt_message
 from app.pipeline import VisitSession
 from app import extract, danger_signs
 from app.normalization import normalize_numbers, latin_name
+from app.schemas import FIELD_TIMEZONE, parse_date_hint
 
 NOTE = 'Sunita Devi ka ANC checkup kiya, weight 52 kilo, agle mahine 15 ko aana hai.'
+HINDI_NOTE = (
+    'मैं आज साहिल के घर जा रही हूं आज उसके चेकअप करना है उसको आज हल्का सा फीवर '
+    'पाया गया है उसका आज वजन 15 किलो है अभी के लिए दवाई दे दी है कल वापस आऊंगी देखने'
+)
 
 
 class SessionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_sets_fever_age_without_guessing_from_name(self):
+        with patch.object(extract, 'settings', replace(settings, demo_mode=True)):
+            session = VisitSession()
+            events = await session.handle({'type': 'utterance', 'text': 'Demo Sita ke ghar gayi. Halka bhukhaar hai.'})
+            self.assertEqual(events[0]['signs'][0]['ageGroup'], 'unknown')
+            for group, level in (
+                ('two_months_or_older', 'check'), ('under_two_months', 'urgent'), ('unknown', 'check'),
+            ):
+                events = await session.handle({'type': 'fever_age', 'ageGroup': group})
+                self.assertEqual(events[0]['signs'][0]['ageGroup'], group)
+                self.assertEqual(events[0]['signs'][0]['level'], level)
+            await session.handle({'type': 'correct', 'text': 'दौरा पड़ा।'})
+            events = await session.handle({'type': 'fever_age', 'ageGroup': 'two_months_or_older'})
+            self.assertTrue(events[0]['message'].startswith('Urgent referral'))
+
+    async def test_fever_check_can_escalate_with_age_or_urgent_sign(self):
+        with patch.object(extract, 'settings', replace(settings, demo_mode=True)):
+            session = VisitSession()
+            first = await session.handle({'type': 'utterance', 'text': 'Sahil ke ghar gayi. Halka bhukhaar hai.'})
+            self.assertEqual(first[0]['signs'][0]['level'], 'check')
+            self.assertIn('Measure temperature', first[0]['message'])
+            self.assertTrue(any(line.startswith('Check-up needed') for line in session.record.followUps))
+            later = await session.handle({'type': 'correct', 'text': 'Baby is 10 days old.'})
+            self.assertEqual(later[0]['signs'][0]['level'], 'urgent')
+            self.assertTrue(any(line.startswith('Urgent referral flag') for line in session.record.followUps))
+
+            session = VisitSession()
+            mixed = await session.handle({'type': 'utterance', 'text': 'बुखार है और दौरा पड़ा।'})
+            self.assertEqual({item['key']: item['level'] for item in mixed[0]['signs']},
+                             {'convulsions': 'urgent', 'fever': 'check'})
+            self.assertTrue(mixed[0]['message'].startswith('Urgent referral'))
+
     async def test_requested_voice_fields_and_corrections(self):
         with patch.object(extract, 'settings', replace(settings, demo_mode=True)):
             session = VisitSession()
@@ -148,23 +186,29 @@ class ApiTests(unittest.TestCase):
                     self.audio.append(frame)
                 else:
                     import json
-                    await self.frames.put(json.dumps({'transcript': NOTE, 'is_final': True}))
+                    await self.frames.put(json.dumps({'transcript': HINDI_NOTE, 'is_final': True}))
 
             async def close(self):
                 await self.frames.put(None)
 
         stream = SpeechStream()
         live = replace(settings, demo_mode=False, gnani_api_key='test-only')
-        with patch.object(main, 'settings', live), patch.object(main, 'open_stt', AsyncMock(return_value=stream)), patch.object(main, 'synthesize', AsyncMock(return_value=None)):
+        with patch.object(main, 'settings', live), patch.object(main, 'open_stt', AsyncMock(return_value=stream)):
             with self.client.websocket_connect('/ws/session') as ws:
                 ws.receive_json()
                 ws.send_json({'type': 'audio_start'})
                 ws.send_bytes(b'\x00\x00' * 512)
                 ws.send_json({'type': 'audio_stop'})
                 transcript = self.receive_until(ws, 'transcript')
-                self.assertEqual(transcript['text'], NOTE)
+                self.assertEqual(transcript['text'], HINDI_NOTE)
                 self.assertTrue(transcript['final'])
-                self.assertEqual(self.receive_until(ws, 'record')['record']['weightKg'], 52)
+                event = self.receive_until(ws, 'record')
+                self.assertEqual(event['missing'], [])
+                self.assertEqual(event['record']['beneficiaryName'], 'Sahil')
+                self.assertEqual(event['record']['weightKg'], 15)
+                expected_date = datetime.now(FIELD_TIMEZONE).date() + timedelta(days=1)
+                self.assertEqual(event['record']['nextVisit'], expected_date.isoformat())
+                self.assertEqual(event['record']['transcript'], HINDI_NOTE)
                 self.assertEqual(len(stream.audio), 1)
 
 
@@ -206,8 +250,36 @@ class ExtractionTests(unittest.TestCase):
         self.assertNotIn('beneficiaryName', extract.extract_heuristic('beneficiary ID 1234'))
         self.assertEqual(extract.extract_heuristic('लाभार्थी आयुष झा')['beneficiaryName'], 'Ayush Jha')
         self.assertEqual(normalize_numbers('next visit 2026-12-15'), 'next visit 2026-12-15')
-        from datetime import date, timedelta
-        self.assertEqual(extract.extract_heuristic('next visit tomorrow')['nextVisit'], (date.today() + timedelta(days=1)).isoformat())
+        today = datetime.now(FIELD_TIMEZONE).date()
+        self.assertEqual(extract.extract_heuristic('next visit tomorrow')['nextVisit'], (today + timedelta(days=1)).isoformat())
+
+    def test_hindi_visit_context_uses_name_and_future_return(self):
+        tomorrow = datetime.now(FIELD_TIMEZONE).date() + timedelta(days=1)
+        for text, name in (
+            (HINDI_NOTE, 'Sahil'),
+            ('मैं आज साहिल कुमार के घर गई। वजन पंद्रह किलो है। कल वापस आऊँगी।', 'Sahil Kumar'),
+            ('Main aaj Sahil ke ghar gayi, 15 kilo, kal wapas aaungi.', 'Sahil'),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(extract.extract_heuristic(text), {
+                    'beneficiaryName': name, 'weightKg': 15, 'nextVisit': tomorrow.isoformat(),
+                })
+        for past_note in (
+            'कल साहिल के घर गई थी। वजन 15 किलो है।',
+            'मैं कल वापस आई थी।',
+            'कल वापस आऊंगी नहीं।',
+            'next visit BP 120/80',
+            'next visit 15 kilo',
+        ):
+            with self.subTest(text=past_note):
+                self.assertNotIn('nextVisit', extract.extract_heuristic(past_note))
+        self.assertNotIn('beneficiaryName', extract.extract_heuristic('उसके घर गई और उसका वजन 15 किलो है।'))
+        self.assertEqual(extract.extract_heuristic('नाम साहिल कुमार है, अगली मुलाक़ात कल'), {
+            'beneficiaryName': 'Sahil Kumar', 'nextVisit': tomorrow.isoformat(),
+        })
+        self.assertEqual(parse_date_hint('कल', today=date(2026, 12, 31)), '2027-01-01')
+        self.assertEqual(parse_date_hint('अगले महीने की 15 तारीख़', today=date(2026, 12, 31)), '2027-01-15')
+        self.assertEqual(parse_date_hint('15 दिसंबर', today=date(2026, 11, 22)), '2026-12-15')
 
     def test_safety_phrase_catalog_and_negation(self):
         for sign in danger_signs.DANGER_SIGNS:
@@ -219,6 +291,12 @@ class ExtractionTests(unittest.TestCase):
                 self.assertEqual(danger_signs.scan(text), [])
         self.assertEqual({m.key for m in danger_signs.scan('no fever but fast breathing')}, {'fast_breathing'})
         self.assertEqual({m.key for m in danger_signs.scan('bukhar nahi hai lekin bukhar hai')}, {'fever'})
+        for phrase in ('bhukhaar', 'बुख़ार', 'हल्का सा फीवर', 'bleeding', 'fast breathing'):
+            with self.subTest(phrase=phrase):
+                self.assertEqual([m.level for m in danger_signs.scan(phrase)], ['check'])
+        for phrase in ('बेहोश', 'दौरा पड़ा', 'heavy bleeding', 'severe chest indrawing', 'not feeding'):
+            with self.subTest(phrase=phrase):
+                self.assertEqual([m.level for m in danger_signs.scan(phrase)], ['urgent'])
 
 
 

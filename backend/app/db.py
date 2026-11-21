@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .danger_signs import signal_level
 
 WHATSAPP_STATUSES = {
     "confirmed",
@@ -163,7 +164,11 @@ def follow_ups() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for record in list_records(limit=100):
         status = whatsapp.get(record.get("id"), {})
+        signs = record.get("dangerSigns") or []
+        urgent = any(signal_level(sign) == "urgent" for sign in signs)
         for line in record.get("followUps", []):
+            if signs and not urgent and line == "DANGER FLAG OPEN - confirm PHC referral was completed":
+                line = "Check-up needed: contact the ANM/PHC promptly to assess the reported symptoms"
             out.append(
                 {
                     "recordId": record.get("id"),
@@ -171,7 +176,8 @@ def follow_ups() -> list[dict[str, Any]]:
                     "visitType": record.get("visitType"),
                     "nextVisit": record.get("nextVisit"),
                     "line": line,
-                    "danger": bool(record.get("dangerSigns")),
+                    "danger": urgent,
+                    "checkUp": bool(signs) and not urgent,
                     "whatsappStatus": status.get("status", "no_response"),
                     "whatsappLastReply": status.get("last_reply"),
                     "whatsappUpdatedAt": status.get("updated_at"),

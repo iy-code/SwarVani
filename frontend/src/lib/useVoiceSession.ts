@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DangerSignInfo, ServerEvent, SessionMeta, SessionState, Turn, VisitRecord } from './types'
+import { voiceSocketUrl } from './api'
 
 // ---------------------------------------------------------------------------
 // Browser speech (demo mode). In production the mic audio streams to Gnani
@@ -36,13 +37,6 @@ function getRecognitionCtor(): SpeechRecognitionCtor | null {
     webkitSpeechRecognition?: SpeechRecognitionCtor
   }
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
-}
-
-function wsUrl(): string {
-  const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
-  if (base) return base.replace(/^http/, 'ws').replace(/\/$/, '') + '/ws/session'
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}/ws/session`
 }
 
 function looksLikeConfirmation(text: string): boolean {
@@ -256,7 +250,6 @@ export function useVoiceSession() {
         case 'danger':
           setDanger(event.signs)
           setDangerMessage(event.message)
-          addTurn('agent', event.message, 'danger')
           if (event.audio !== undefined) speak(event.message, event.audio)
           else speak(event.message)
           break
@@ -324,7 +317,7 @@ export function useVoiceSession() {
         let resolved = false
         let socket: WebSocket
         try {
-          socket = new WebSocket(wsUrl())
+          socket = new WebSocket(voiceSocketUrl())
         } catch {
           setStatus('error')
           setError('Could not open the voice socket.')
@@ -625,6 +618,7 @@ export function useVoiceSession() {
     stopListening,
     toggleMute,
     submitText,
+    setFeverAge: (ageGroup: import('./types').FeverAgeGroup) => sendRaw({ type: 'fever_age', ageGroup }),
     confirm,
     requestSummary,
     restart,

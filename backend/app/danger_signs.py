@@ -7,11 +7,8 @@ so the referral alert can never depend on the model noticing a sign.
 The prototype phrase list is grounded in the public NHM/MoHFW materials cited
 in README.md. These keyword rules are a safety prompt, not a clinical protocol.
 
-Policy:
-  * A clear phrase match  -> confirm=True, spoken referral alert.
-  * A weak/partial match  -> confirm=False, still flagged (uncertain match is
-    treated as a flag, per the product requirement).
-  * Negated phrases ("bukhar nahi hai") are ignored.
+Findings prompt either a check-up or an urgent referral. Phrase confidence
+and urgency are separate.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ from __future__ import annotations
 import re
 import json
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 DATA_PATH = Path(__file__).resolve().parent / "data" / "danger_signs.json"
@@ -49,6 +46,7 @@ class DangerSign:
     fuzzy: tuple[str, ...] = ()
     who: str = "newborn"
     source: str = ""
+    level: str = "urgent"
 
 
 _catalog = json.loads(DATA_PATH.read_text(encoding="utf-8"))
@@ -58,11 +56,12 @@ DANGER_SIGNS: tuple[DangerSign, ...] = tuple(
         key=item["key"],
         label_en=item["label_en"],
         label_hi=item["label_hi"],
-        action_hi=item["action_hi"],
+        action_hi=item.get("action_hi", ""),
         phrases=tuple(item.get("phrases", [])),
         fuzzy=tuple(item.get("fuzzy", [])),
         who=item.get("who", "newborn"),
         source=item.get("source", SOURCE),
+        level=item.get("level", "urgent"),
     )
     for item in _catalog["signs"]
 )
@@ -79,9 +78,10 @@ class Match:
     matched_phrase: str
     confident: bool
     source: str = SOURCE
+    level: str = "urgent"
 
     def as_dict(self) -> dict:
-        return {
+        sign = {
             "key": self.key,
             "labelEn": self.label_en,
             "labelHi": self.label_hi,
@@ -89,7 +89,11 @@ class Match:
             "matched": self.matched_phrase,
             "confident": self.confident,
             "source": self.source,
+            "level": self.level,
         }
+        if self.key == "fever":
+            sign["ageGroup"] = "under_two_months" if self.level == "urgent" else "unknown"
+        return sign
 
 
 def normalize(text: str) -> str:
@@ -146,6 +150,8 @@ def scan(text: str) -> list[Match]:
                     action_hi=sign.action_hi,
                     matched_phrase=phrase,
                     confident=True,
+                    source=sign.source,
+                    level=sign.level,
                 )
                 break
         if sign.key in found:
@@ -162,23 +168,65 @@ def scan(text: str) -> list[Match]:
                     action_hi=sign.action_hi,
                     matched_phrase=phrase,
                     confident=False,
+                    source=sign.source,
+                    level=sign.level,
                 )
                 break
 
+    if "maternal_bleeding" in found:
+        found.pop("bleeding_reported", None)
     return list(found.values())
 
 
-def referral_message(matches: list[Match]) -> str:
-    """Fixed, template-only referral line. Never generated text."""
-    if not matches:
-        return ""
-    labels = ", ".join(m.label_hi for m in matches)
-    actions = []
-    for m in matches:
-        if m.action_hi not in actions:
-            actions.append(m.action_hi)
-    return (
-        f"Dhyan dijiye. {labels}. "
-        f"{' '.join(actions)}. "
-        "Yeh salah guideline par based hai, dawa nahi."
-    )
+YOUNG_INFANT = re.compile(
+    r"\b(?:newborn|navjat)\b|नवजात|"
+    r"\b(?:baby|infant)\s+(?:is\s+)?(?P<age>\d{1,2})\s*(?P<unit>days?|weeks?)\s+old\b|"
+    r"(?P<hindi_age>\d{1,2})\s*(?P<hindi_unit>दिन|हफ्ते|सप्ताह)\s+(?:का|की)\s+(?:बच्चा|बच्ची|शिशु)"
+)
+
+
+def has_young_infant_context(text: str) -> bool:
+    """Use an explicit newborn mention or stated age, rather than guessing."""
+    from .normalization import normalize_numbers
+
+    for match in YOUNG_INFANT.finditer(normalize_numbers(text.casefold())):
+        age = match["age"] or match["hindi_age"]
+        if age is None:
+            return True
+        unit = match["unit"] or match["hindi_unit"]
+        days = int(age) * (7 if unit.startswith("week") or unit in {"हफ्ते", "सप्ताह"} else 1)
+        if days < 60:
+            return True
+    return False
+
+
+def apply_context(matches: list[Match], young_infant: bool) -> list[Match]:
+    if not young_infant:
+        return matches
+    return [
+        replace(
+            match, level="urgent", label_en="Fever reported in a young infant", label_hi="Chhote shishu ko bukhar",
+            source="NHM IMNCI Health Worker Chart Booklet (2023), young infant assessment",
+        )
+        if match.key == "fever" else match
+        for match in matches
+    ]
+
+
+def signal_level(sign: dict) -> str:
+    """Give older saved findings a tier when they predate this field."""
+    catalog_entry = DANGER_BY_KEY.get(sign.get("key"))
+    return sign.get("level") or (catalog_entry.level if catalog_entry else "urgent")
+
+
+def assessment_message(signs: list[dict]) -> str:
+    """Use the highest tier for the main action while retaining all findings."""
+    if any(signal_level(sign) == "urgent" for sign in signs):
+        return "Urgent referral flag. Contact your ANM/PHC now and follow the local emergency referral protocol."
+    fever = next((sign for sign in signs if sign["key"] == "fever"), None)
+    if fever:
+        check = "Measure temperature, ask about other symptoms, and contact your ANM/PHC promptly for assessment."
+        if fever.get("ageGroup") in {None, "unknown"}:
+            return f"Age is unknown. Check the patient's age now. {check}"
+        return check
+    return "Check now: confirm what you observed and contact your ANM/PHC promptly to assess whether referral is needed."

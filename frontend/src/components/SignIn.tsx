@@ -70,13 +70,13 @@ export default function SignIn({ onBack, onSignIn }: Props) {
             <p className="mt-1 text-sm text-ink/50">Voice field register</p>
           </div>
 
-          <p className="text-sm font-bold uppercase tracking-[0.2em] text-clay">Worker access</p>
-          <h2 className="mt-3 font-display text-5xl leading-none tracking-tight text-forest">Welcome back.</h2>
-          <p className="mt-4 text-base leading-7 text-ink/60">Use your field identity to open the visit register on this device.</p>
+          <h2 className="font-display text-4xl leading-none tracking-tight text-forest">Open your visit register</h2>
+          <p lang="hi" className="mt-3 font-hindi font-semibold text-forest">अपना रजिस्टर खोलें</p>
+          <p className="mt-3 text-base leading-7 text-ink/75">Enter your details to continue on this device.</p>
 
           <form onSubmit={submit} className="mt-9 space-y-5">
             <label className="block">
-              <span className="mb-2 block text-sm font-bold text-ink/75">Full name</span>
+              <span className="mb-2 block text-sm font-bold text-ink">Full name · <span lang="hi">पूरा नाम</span></span>
               <input
                 autoComplete="name"
                 value={name}
@@ -86,7 +86,7 @@ export default function SignIn({ onBack, onSignIn }: Props) {
               />
             </label>
             <label className="block">
-              <span className="mb-2 block text-sm font-bold text-ink/75">ASHA worker ID</span>
+              <span className="mb-2 block text-sm font-bold text-ink">ASHA worker ID · <span lang="hi">आशा आईडी</span></span>
               <input
                 autoComplete="username"
                 value={workerId}
@@ -96,7 +96,7 @@ export default function SignIn({ onBack, onSignIn }: Props) {
               />
             </label>
             <label className="block">
-              <span className="mb-2 block text-sm font-bold text-ink/75">District / block</span>
+              <span className="mb-2 block text-sm font-bold text-ink">District or block · <span lang="hi">ज़िला या प्रखंड</span></span>
               <input
                 autoComplete="address-level2"
                 value={district}
@@ -109,13 +109,13 @@ export default function SignIn({ onBack, onSignIn }: Props) {
             {error && <p role="alert" className="border-l-4 border-danger bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
 
             <button type="submit" className="flex w-full items-center justify-center gap-2 bg-forest px-5 py-4 text-base font-bold text-cream transition hover:bg-forest-deep">
-              <CheckIcon className="h-5 w-5" /> Sign in to the register
+              <CheckIcon className="h-5 w-5" /> Continue · <span lang="hi">आगे बढ़ें</span>
             </button>
           </form>
 
           <div className="mt-7 flex gap-3 border-t border-forest/10 pt-6 text-sm leading-6 text-ink/50">
             <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-moss" />
-            <p>Prototype access is stored only in this browser. Connect a production identity provider before field deployment.</p>
+            <p>Your worker profile is saved in this browser. Use sample visit details when trying the app.</p>
           </div>
         </div>
       </section>

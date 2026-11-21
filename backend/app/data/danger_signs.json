@@ -7,7 +7,10 @@
       "label_hi": "Doodh nahi le raha",
       "action_hi": "Turant PHC le jaiye",
       "phrases": [
-        "doodh nahi",
+        "unable to drink",
+        "cannot drink",
+        "दूध नहीं पी रहा",
+        "दूध नहीं पी रही",
         "doodh nahin",
         "feed nahi",
         "feeding nahi",
@@ -31,12 +34,10 @@
         "convulsion",
         "convulsions",
         "fits",
-        "jhatke",
-        "jhatka",
-        "mirgi",
-        "झटके",
-        "दौरा",
-        "मिर्गी"
+        "jhatke aa rahe",
+        "झटके आ रहे",
+        "दौरा पड़ा",
+        "दौरा आ रहा"
       ],
       "fuzzy": [],
       "who": "both",
@@ -44,7 +45,8 @@
     },
     {
       "key": "fast_breathing",
-      "label_en": "Fast breathing (60+ per minute)",
+      "label_en": "Fast breathing reported",
+      "level": "check",
       "label_hi": "Saans tez chal rahi hai",
       "action_hi": "Turant PHC le jaiye",
       "phrases": [
@@ -67,7 +69,7 @@
       "label_hi": "Seena andar dhans raha hai",
       "action_hi": "Turant PHC le jaiye",
       "phrases": [
-        "chest indrawing",
+        "severe chest indrawing",
         "seena dhans",
         "seene mein dhans",
         "chest pull",
@@ -80,12 +82,18 @@
     },
     {
       "key": "fever",
-      "label_en": "Fever (or very low temperature)",
+      "label_en": "Fever reported",
+      "level": "check",
       "label_hi": "Bukhar hai",
       "action_hi": "PHC se sampark kijiye, bukhar check karwaiye",
       "phrases": [
         "bukhar",
+        "bukhaar",
+        "bhukhar",
+        "bhukhaar",
         "बुखार",
+        "बुख़ार",
+        "फीवर",
         "fever",
         "temperature high",
         "jwar"
@@ -100,7 +108,8 @@
     },
     {
       "key": "jaundice",
-      "label_en": "Yellow palms / soles (jaundice)",
+      "label_en": "Yellow skin, palms or soles reported",
+      "level": "check",
       "label_hi": "Peelia dikh raha hai",
       "action_hi": "Turant PHC le jaiye",
       "phrases": [
@@ -127,7 +136,6 @@
         "unconscious",
         "very lethargic",
         "bahut sust",
-        "sust hai",
         "बहुत सुस्त"
       ],
       "fuzzy": [],
@@ -135,18 +143,27 @@
       "source": "NHM ASHA Training Module 7 p.55; CEmONC Curriculum 2024 Part 2 p.70; NHM Pregnancy Care p.238"
     },
     {
+      "key": "bleeding_reported",
+      "label_en": "Bleeding reported",
+      "label_hi": "Khoon aa raha hai",
+      "level": "check",
+      "phrases": ["bleeding", "khoon aa raha", "khoon beh", "खून आ रहा", "खून बह", "रक्तस्राव"],
+      "who": "mother"
+    },
+    {
       "key": "maternal_bleeding",
       "label_en": "Severe bleeding after delivery",
       "label_hi": "Zyada khoon beh raha hai",
       "action_hi": "Turant PHC le jaiye, 108 par call kijiye",
       "phrases": [
-        "bleeding",
-        "khoon beh",
-        "khoon aa raha",
         "heavy bleeding",
-        "खून बह",
-        "खून आ रहा",
-        "रक्तस्राव"
+        "severe bleeding",
+        "zyada khoon",
+        "bahut khoon",
+        "ज़्यादा खून",
+        "ज्यादा खून",
+        "बहुत खून",
+        "अत्यधिक रक्तस्राव"
       ],
       "fuzzy": [],
       "who": "mother",

@@ -43,17 +43,29 @@ SPOKEN_BP_RE = re.compile(
     rf"(?:bp|blood pressure|बीपी|ब्लड प्रेशर)\s+(({_NUMBER_WORD_PATTERN})(?:[ -]+(?:{_NUMBER_WORD_PATTERN})){{0,2}})\s+(?:by|upon)\s+(({_NUMBER_WORD_PATTERN})(?:[ -]+(?:{_NUMBER_WORD_PATTERN})){{0,2}})",
     re.I,
 )
-_NAME_TOKEN = r"[A-Za-z\u0900-\u097F]+"
-NAME_RES = (
-    re.compile(
-        rf"(?:beneficiary\s+name|beneficiary(?!\s*(?:id|number))|लाभार्थी(?!\s*(?:आईडी|आई डी|संख्या))|naam|name|नाम)"
-        rf"\s*(?:is|hai|है)?\s*:?\s*({_NAME_TOKEN}(?:\s+{_NAME_TOKEN})?)",
-        re.I,
-    ),
-    re.compile(rf"({_NAME_TOKEN}(?:\s+{_NAME_TOKEN})?)\s+(?:ka|ki|ke|ko|ji|का|की|को)(?=\s|$|[,.।])", re.I),
+_NAME_TOKEN = r"[A-Za-z\u0900-\u0963\u0972-\u097F]+(?:[-'][A-Za-z\u0900-\u0963\u0972-\u097F]+)*"
+_NAME_WORDS = rf"({_NAME_TOKEN}(?:\s+{_NAME_TOKEN}){{0,3}})"
+_NAME_LABEL = re.compile(
+    rf"(?<![\w\u0900-\u0963])(?:beneficiary(?:\s+name)?|patient\s+name|लाभार्थी(?:\s+का\s+नाम)?|naam|name|नाम)(?=\s|:)"
+    rf"\s*(?:(?:is|hai|है)(?=\s|:)\s*)?:?\s*{_NAME_WORDS}",
+    re.I,
 )
+_VISIT_NAME = re.compile(
+    rf"{_NAME_WORDS}\s+(?:(?:ke|के)\s+(?:ghar|घर)|"
+    r"(?:ka|ki|ke|का|की|के)\s+(?:anc|pnc|check\s?up|चेक\s?अप|जाँच|जांच|weight|wajan|व[ज़ज]+न|bp|बीपी|"
+    r"visit|विजिट|मुलाक़ात|मुलाकात|vaccination|tika|टीका|नवजात|newborn|गर्भावस्था)|"
+    r"(?:se|से)\s+(?:mili|mila|मिली|मिला))(?=\s|$|[,.।])",
+    re.I,
+)
+_NAME_DELIMITERS = set("""
+    i am went visited saw met at today yesterday tomorrow the her his patient beneficiary
+    aaj kal main mein mai ne uske uska uski ghar visit checkup kiya ka ki ke ko se ji
+    is hai hain and aur name naam id number weight wajan bp hb anc pnc age check
+    vaccination vaccine supplements next fever follow-up unknown unclear unavailable not no missing
+    मैं में आज कल ने उसके उसका उसकी उसको घर विजिट मुलाकात मुलाक़ात चेकअप का की के को से जी
+    नाम लाभार्थी आईडी आई संख्या नंबर वजन वज़न बीपी एचबी है हैं और अगली अगले दवा बुखार फीवर नहीं पता
+""".split())
 ID_RE = re.compile(r"(?:beneficiary\s*(?:id|number)|patient\s*(?:id|number)|लाभार्थी\s*(?:आईडी|आई डी|संख्या)|आईडी|आई डी|\bid\b)\s*(?:is|hai|है|हैं|number|नंबर|:)?\s*:?\s*([A-Za-z]*-?\d+(?:-\d+)*)", re.I)
-NAME_STOP = re.compile(r"\s+(?:is|hai|है|हैं|ka|ki|weight|wajan|वजन|वज़न|beneficiary|id|आईडी|and|aur|और|visit|ANC|PNC)(?=\s|$|[,.।])", re.I)
 
 
 VISIT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -81,17 +93,48 @@ SUPPLEMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 NEXT_VISIT_RE = re.compile(
-    r"((?:agle|agli|agle|next|अगले)\s+(?:mahine|month|hafte|week)[^.,;]{0,24})"
-    r"|((?:next visit|agli visit|agli baar|अगली विजिट|अगली मुलाकात)[^.,;]{0,40})",
+    r"(?:next\s+(?:visit|check\s?up)|follow[- ]up(?:\s+date)?|agli\s+(?:visit|baar|mulakat)|"
+    r"अगली\s+(?:विजिट|बार|मुलाक[़]?ात|जाँच|जांच))\s*(?:(?:date|is|on|hai|है|की\s+तारीख[़]?)\s+)*(?:[:=]\s*)?"
+    r"(?P<stated>[^.,;।!?]{1,48})"
+    r"|(?<![\w\u0900-\u0963])(?P<scheduled>(?:(?:agle|agli|next|अगले)\s+(?:mahine|month|hafte|week|महीने|हफ्ते|सप्ताह))[^.,;।!?]{0,24})",
+    re.I,
+)
+_RELATIVE_DATE = r"day\s+after\s+tomorrow|tomorrow|today|parso[n]?|kal|aaj|परसों|परसो|कल|आज"
+RETURN_VISIT_RE = re.compile(
+    rf"(?<![\w\u0900-\u0963])(?P<relative>{_RELATIVE_DATE})(?:\s+ही)?\s+"
+    r"(?:(?:wapas|vaapas|वापस|phir|फिर|dobara|दोबारा)\s+)?"
+    r"(?:aaung[ai]|aaoong[ai]|aaungi|aayenge|aayegi|milung[ai]|मिलूँगी|मिलूंगी|"
+    r"आऊँगी|आऊंगी|आऊँगा|आऊंगा|आउंगी|आउंगा|आएँगे|आएंगे|आएगी|आना\s+है|देखने\s+आऊंगी|"
+    r"(?:i|we)(?:['’]ll|\s+will)\s+(?:return|come\s+back|visit)|(?:returning|coming\s+back))"
+    r"(?![\w\u0900-\u0963]|\s+(?:nahi|nahin|नहीं|नही)(?=\s|$|[,.।]))",
+    re.I,
+)
+ENGLISH_RETURN_RE = re.compile(
+    rf"\b(?:i|we)(?:['’]ll|\s+will)\s+(?:return|come\s+back|visit)(?:\s+again)?\s+(?P<relative>{_RELATIVE_DATE})(?![\w\u0900-\u0963])",
     re.I,
 )
 
 
-def _first_match(patterns: tuple[re.Pattern[str], ...], text: str) -> str | None:
-    for pattern in patterns:
-        m = pattern.search(text)
-        if m:
-            return (m.group(1) or "").strip()
+def _extract_name(text: str) -> str | None:
+    for match in _NAME_LABEL.finditer(text):
+        words = []
+        for word in match.group(1).split():
+            if word.casefold() in _NAME_DELIMITERS:
+                break
+            words.append(word)
+        if words:
+            return latin_name(" ".join(words))
+    for match in _VISIT_NAME.finditer(text):
+        words = match.group(1).split()
+        # Keep the name immediately before the visit phrase. Earlier words
+        # such as “मैं आज” describe the speaker or timing.
+        name = []
+        for word in reversed(words):
+            if word.casefold() in _NAME_DELIMITERS:
+                break
+            name.insert(0, word)
+        if name:
+            return latin_name(" ".join(name))
     return None
 
 
@@ -117,6 +160,7 @@ def _spoken_number(phrase: str) -> int | None:
 
 
 def extract_heuristic(text: str) -> dict[str, Any]:
+    name = _extract_name(text)
     text = normalize_numbers(text)
     data: dict[str, Any] = {}
 
@@ -124,12 +168,11 @@ def extract_heuristic(text: str) -> dict[str, Any]:
     if identifier:
         data["beneficiaryId"] = identifier.group(1)
 
-    name = _first_match(NAME_RES, text)
     if name:
-        data["beneficiaryName"] = latin_name(NAME_STOP.split(name)[0])
+        data["beneficiaryName"] = name
 
     for visit_type, keywords in VISIT_KEYWORDS:
-        if any(k in text.lower() for k in keywords):
+        if any(re.search(rf"(?<![\w\u0900-\u0963]){re.escape(k)}(?![\w\u0900-\u0963])", text, re.I) for k in keywords):
             data["visitType"] = visit_type
             break
 
@@ -167,12 +210,15 @@ def extract_heuristic(text: str) -> dict[str, Any]:
     if supplements:
         data["supplements"] = supplements
 
-    m = NEXT_VISIT_RE.search(text)
-    if m:
-        hint = (m.group(1) or m.group(2) or "").strip()
-        iso = parse_date_hint(hint)
-        if iso:
-            data["nextVisit"] = iso
+    for pattern in (NEXT_VISIT_RE, RETURN_VISIT_RE, ENGLISH_RETURN_RE):
+        for match in pattern.finditer(text):
+            hint = next(value for value in match.groups() if value is not None)
+            iso = parse_date_hint(hint)
+            if iso:
+                data["nextVisit"] = iso
+                break
+        if "nextVisit" in data:
+            break
     return sanitize(data)
 
 

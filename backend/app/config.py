@@ -50,6 +50,8 @@ class Settings:
     whatsapp_app_secret: str = field(default_factory=lambda: _env("WHATSAPP_APP_SECRET"))
     whatsapp_access_token: str = field(default_factory=lambda: _env("WHATSAPP_ACCESS_TOKEN"))
     whatsapp_phone_number_id: str = field(default_factory=lambda: _env("WHATSAPP_PHONE_NUMBER_ID"))
+    whatsapp_test_recipient: str = field(default_factory=lambda: _env("WHATSAPP_TEST_RECIPIENT"))
+    whatsapp_api_version: str = field(default_factory=lambda: _env("WHATSAPP_API_VERSION", "v24.0"))
     allowed_origins: list[str] = field(
         default_factory=lambda: [
             o.strip()

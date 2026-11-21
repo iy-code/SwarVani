@@ -5,6 +5,8 @@ export type SessionState =
   | 'awaiting_confirmation'
   | 'saved'
 
+export type FeverAgeGroup = 'under_two_months' | 'two_months_or_older' | 'unknown'
+
 export type DangerSignInfo = {
   key: string
   labelEn: string
@@ -12,6 +14,8 @@ export type DangerSignInfo = {
   actionHi: string
   matched: string
   confident: boolean
+  level: 'check' | 'urgent'
+  ageGroup?: FeverAgeGroup
   source: string
 }
 
@@ -85,6 +89,7 @@ export type FollowUp = {
   nextVisit: string | null
   line: string
   danger: boolean
+  checkUp?: boolean
   whatsappStatus: 'confirmed' | 'reschedule_requested' | 'no_response' | 'asha_callback_requested'
   whatsappLastReply: string | null
   whatsappUpdatedAt: string | null
@@ -105,4 +110,5 @@ export type WhatsAppUpdatesPayload = {
   summary: Record<WhatsAppStatus, number>
   webhookConfigured: boolean
   sendingConfigured: boolean
+  simulatorEnabled: boolean
 }

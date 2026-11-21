@@ -218,4 +218,23 @@ python -m unittest scripts.test_regressions -v
 
 ## Deployment notes
 
-Deploy the FastAPI backend on a host that supports persistent WebSocket connections and outbound WebSockets to Gnani. Deploy the Vite `frontend/dist` directory as a static HTTPS site, set `VITE_API_BASE` to the backend HTTPS origin at build time, and set `SV_ALLOWED_ORIGINS` on the backend to the exact frontend origin. Set `SV_DEMO_MODE=false`, API credentials, and an encryption key on the backend host only. Do not deploy with default demo credentials or use this prototype for real patient data.
+### Deploy the frontend with GitHub Pages
+
+1. Push the source and `.github/workflows/pages.yml` to the repository's `main` branch. Review it through a pull request if needed. The workflow publishes on pushes to `main` and can also be run from the **Actions** tab.
+2. Deploy the backend on Render using the settings below. Use a fresh demo database with synthetic data. Set `SV_ALLOWED_ORIGINS=https://ayushjha9999999.github.io` for this repository. The browser origin excludes the `/SwarVani/` path.
+3. In GitHub, select **Settings → Pages → Build and deployment → Source → GitHub Actions**. Under **Settings → Secrets and variables → Actions → Variables**, create the repository variable `VITE_API_BASE` with the Render HTTPS origin, such as `https://swarvani-api.onrender.com`. This is a public build setting. Keep secret keys on Render.
+4. In **Actions**, run **Deploy SwarVani to GitHub Pages** on `main`. Use the URL from the deploy job to test the landing video, a sample visit, and the follow-up board. The workflow uses the Pages base path when building media and frontend assets.
+
+### Deploy a demo with Vercel and Render
+
+Push the version you want to deploy to GitHub, including any local changes you want online. Git ignores `backend/.env` and the local database. The site is a prototype with a local worker profile rather than authenticated access. Start with a fresh database and use synthetic visit data only.
+
+1. In [Render](https://dashboard.render.com/), create a **Web Service** from your GitHub repo. Select the branch you want to deploy and set the root directory to `backend`. Use the **Python** runtime, build command `pip install -r requirements.txt`, start command `python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT"`, and health check path `/api/health`. Set `SV_DEMO_MODE=true` for browser speech, rule-based extraction, and the WhatsApp simulator. Copy the HTTPS service URL once its health check passes.
+2. In [Vercel](https://vercel.com/new), import the same repo and branch. Set **Root Directory** to `frontend`. Set the frontend build variable `VITE_API_BASE` to the Render HTTPS origin (for example, `https://swarvani-api.onrender.com`). The Vercel configuration in `frontend/vercel.json` builds the Vite app into `dist`.
+3. In Render, set `SV_ALLOWED_ORIGINS` to the exact deployed Vercel origin (for example, `https://swarvani.vercel.app`). Multiple known origins can be comma-separated. Check the deployed site by sending a sample visit note, confirming it, opening Follow-ups, and simulating a WhatsApp reply. The browser connects to Render directly over HTTPS and WSS.
+
+Render's default filesystem is ephemeral. For saved demo visits to survive restarts, attach a persistent disk to a paid service and set `SV_DB_PATH` to a database file within the disk mount directory. Set `SV_DB_KEY` to a new Fernet key on the backend if enabling encryption, and keep that key stable for the same database.
+
+For Netlify, use the same Render backend. Import the repository with base directory `frontend`, build command `npm run build`, and publish directory `dist`. Set the same `VITE_API_BASE` build variable and add the Netlify origin to the backend's allowed origins.
+
+Keep Gnani, LLM, Meta, and database credentials in backend environment variables. Browser demo mode works without those integrations. Live provider setup is separate, and the demo's local-only WhatsApp test sender is intended for localhost.

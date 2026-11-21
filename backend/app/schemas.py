@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
+from .danger_signs import signal_level
+
 VISIT_TYPES = ("ANC", "PNC", "IMMUNISATION", "NEWBORN", "GROWTH", "OTHER")
+FIELD_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+MONTH_NAMES = (
+    ("january", "jan", "जनवरी"), ("february", "feb", "फ़रवरी", "फरवरी"),
+    ("march", "mar", "मार्च"), ("april", "apr", "अप्रैल"),
+    ("may", "मई"), ("june", "jun", "जून"), ("july", "jul", "जुलाई"),
+    ("august", "aug", "अगस्त"), ("september", "sep", "सितंबर", "सितम्बर"),
+    ("october", "oct", "अक्टूबर"), ("november", "nov", "नवंबर", "नवम्बर"),
+    ("december", "dec", "दिसंबर", "दिसम्बर"),
+)
+MONTH_BY_NAME = {name: month for month, names in enumerate(MONTH_NAMES, 1) for name in names}
+MONTH_PATTERN = "|".join(MONTH_BY_NAME)
 
 # Fields the voice agent is allowed to read back / patch.
 EDITABLE_FIELDS = (
@@ -78,60 +93,58 @@ def follow_up_lines(record: VisitRecord) -> list[str]:
 
     if record.vaccination:
         lines.append(f"Record vaccination: {record.vaccination}")
-    if record.dangerSigns:
-        lines.append("DANGER FLAG OPEN - confirm PHC referral was completed")
+    if any(signal_level(sign) == "urgent" for sign in record.dangerSigns):
+        lines.append("Urgent referral flag: confirm referral with the ANM/PHC")
+    elif record.dangerSigns:
+        lines.append("Check-up needed: contact the ANM/PHC promptly to assess the reported symptoms")
     if record.visitType == "ANC" and not record.hb:
         lines.append("Hb not recorded - capture at next contact")
     return lines
 
 
 def parse_date_hint(value: str | None, today: date | None = None) -> str | None:
-    """Best-effort parse of 'agle mahine 15 ko' style dates into ISO."""
+    """Parse a date at the start of a follow-up phrase into ISO."""
     if not value:
         return None
-    normalized = value.strip()
-    try:
-        return date.fromisoformat(normalized).isoformat()
-    except ValueError:
-        pass
-    import re
-
-    iso_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", normalized)
+    text = value.strip().lower()
+    iso_match = re.match(r"(\d{4}-\d{2}-\d{2})(?!\d)", text)
     if iso_match:
         try:
             return date.fromisoformat(iso_match.group(1)).isoformat()
         except ValueError:
             return None
-    today = today or date.today()
-    text = value.lower().strip()
-    if re.search(r"\bday after tomorrow\b|परसों", text):
-        return (today + timedelta(days=2)).isoformat()
-    if re.search(r"\btomorrow\b|कल", text):
-        return (today + timedelta(days=1)).isoformat()
-    if re.search(r"\btoday\b|आज", text):
-        return today.isoformat()
-    if re.search(r"\bnext week\b|अगले हफ्ते|अगले सप्ताह", text):
-        return (today + timedelta(days=7)).isoformat()
-    day_match = None
-    m = re.search(r"(\d{1,2})", text)
-    if m:
-        day_match = int(m.group(1))
-    if not day_match:
-        return None
-    if day_match < 1 or day_match > 31:
-        return None
+    today = today or datetime.now(FIELD_TIMEZONE).date()
+    for pattern, days in (
+        (r"day\s+after\s+tomorrow|parso[n]?|परसों|परसो", 2),
+        (r"tomorrow|kal|कल", 1),
+        (r"today|aaj|आज", 0),
+        (r"next\s+week|agle\s+hafte|अगले\s+हफ्ते|अगले\s+सप्ताह", 7),
+    ):
+        if re.match(rf"(?:{pattern})(?![\w\u0900-\u0963])", text):
+            return (today + timedelta(days=days)).isoformat()
 
-    if "agle mahine" in text or "next month" in text or "अगले महीने" in text:
-        year = today.year + (1 if today.month == 12 else 0)
-        month = 1 if today.month == 12 else today.month + 1
-    elif "is mahine" in text or "this month" in text:
-        year, month = today.year, today.month
+    named = re.match(
+        rf"(\d{{1,2}})(?:st|nd|rd|th)?\s+({MONTH_PATTERN})(?![\w\u0900-\u0963])(?:\s+(\d{{4}})(?!\d))?",
+        text,
+    )
+    if named:
+        day = int(named[1])
+        month = MONTH_BY_NAME[named[2]]
+        year = int(named[3]) if named[3] else today.year + ((month, day) < (today.month, today.day))
     else:
+        numeric = re.match(
+            r"(?:(agle\s+mahine|next\s+month|अगले\s+महीने|is\s+mahine|this\s+month|इस\s+महीने)\s+"
+            r"(?:(?:ki|की)\s+)?)?(\d{1,2})(?:st|nd|rd|th)?(?=$|[,.।]|\s+(?:ko|को|tareekh|तारीख[़]?)(?![\w\u0900-\u0963]))",
+            text,
+        )
+        if not numeric:
+            return None
+        day = int(numeric[2])
         year, month = today.year, today.month
-        if day_match < today.day:
+        if numeric[1] in {"agle mahine", "next month", "अगले महीने"} or (not numeric[1] and day < today.day):
             month = month + 1 if month < 12 else 1
-            year = year + (1 if month == 1 else 0)
+            year += month == 1
     try:
-        return date(year, month, day_match).isoformat()
+        return date(year, month, day).isoformat()
     except ValueError:
         return None

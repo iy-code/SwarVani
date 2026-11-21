@@ -5,11 +5,41 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import httpx
+from fastapi import HTTPException
+from .config import settings
 from typing import Any, Iterator
 
 from . import db
 
 PAYLOAD_PREFIX = "swarvani_followup"
+
+
+async def send_test_followup(record_id: str) -> str:
+    """Send only to the server-configured test recipient; never include clinical data."""
+    if not settings.whatsapp_sending_ready or not re.fullmatch(r"[1-9][0-9]{7,14}", settings.whatsapp_test_recipient):
+        raise HTTPException(503, "Set Meta credentials and WHATSAPP_TEST_RECIPIENT (country code and digits only) in backend/.env.")
+    payload = {
+        "messaging_product": "whatsapp", "to": settings.whatsapp_test_recipient,
+        "type": "interactive", "interactive": {
+            "type": "button", "body": {"text": "SwarVani test follow-up. Please select a response."},
+            "action": {"buttons": [
+                {"type": "reply", "reply": {"id": quick_reply_payload(record_id, status), "title": title}}
+                for status, title in [("confirmed", "Confirm"), ("reschedule_requested", "Reschedule"), ("asha_callback_requested", "Request ASHA call")]
+            ]},
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"https://graph.facebook.com/{settings.whatsapp_api_version}/{settings.whatsapp_phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {settings.whatsapp_access_token}"}, json=payload,
+            )
+        if response.is_error:
+            raise HTTPException(502, "Meta rejected the message. Check the token and test recipient, and message the test number first to open the 24-hour reply window.")
+        return response.json()["messages"][0]["id"]
+    except (httpx.HTTPError, ValueError, KeyError, IndexError):
+        raise HTTPException(502, "Could not confirm Meta accepted the message. Check WhatsApp before retrying.") from None
 
 STATUS_ALIASES = {
     "confirmed": "confirmed",

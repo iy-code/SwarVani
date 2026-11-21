@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { WorkerProfile } from '../lib/auth'
 import type { WhatsAppUpdatesPayload } from '../lib/types'
 import { workerInitials } from '../lib/auth'
+import { apiUrl } from '../lib/api'
 import { ArrowIcon, ClipboardIcon, ListIcon, LogoutIcon, MicIcon, PhoneIcon, ShieldIcon, SparkIcon, UserIcon, WaveIcon, WhatsAppIcon } from './Icons'
 
 type Props = {
@@ -11,13 +12,14 @@ type Props = {
   onSignIn: () => void
   onSignOut: () => void
 }
-type DangerPreview = { key: string; labelEn: string; labelHi: string; who: string }
+type DangerPreview = { key: string; labelEn: string; labelHi: string; who: string; level: 'check' | 'urgent' }
 
 const EMPTY_WHATSAPP: WhatsAppUpdatesPayload = {
   updates: [],
   summary: { confirmed: 0, reschedule_requested: 0, no_response: 0, asha_callback_requested: 0 },
   webhookConfigured: false,
   sendingConfigured: false,
+  simulatorEnabled: false,
 }
 
 const WHATSAPP_LABELS = {
@@ -76,7 +78,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
 
   useEffect(() => {
     let active = true
-    fetch('/api/danger-signs')
+    fetch(apiUrl('/api/danger-signs'))
       .then((response) => response.ok ? response.json() as Promise<{ signs: DangerPreview[]; source: string }> : Promise.reject())
       .then((payload) => {
         if (!active) return
@@ -91,7 +93,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
     if (!whatsappOpen) return
     let active = true
     const loadUpdates = () => {
-      fetch('/api/whatsapp/updates')
+      fetch(apiUrl('/api/whatsapp/updates'))
         .then((response) => response.ok ? response.json() as Promise<WhatsAppUpdatesPayload> : Promise.reject())
         .then((payload) => { if (active) setWhatsappData(payload) })
         .catch(() => undefined)
@@ -107,7 +109,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
   return (
     <div className="landing-page min-h-screen bg-[#11120f] text-white">
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#10110f]/95 text-white backdrop-blur-md">
-        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-2 px-4">
           <a href="#top" className="flex items-center gap-2.5">
             <span className="grid h-9 w-9 place-items-center border border-white/20 bg-white/5 text-[#e7b665]">
               <WaveIcon className="h-5 w-5" />
@@ -117,7 +119,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
               <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">SwarVani</span>
             </span>
           </a>
-          <nav className="hidden items-center gap-7 text-sm font-medium text-white/65 md:flex">
+          <nav aria-label="About SwarVani" className="hidden items-center gap-6 text-sm font-medium text-white/80 lg:flex">
             <a className="transition hover:text-white" href="#problem">
               Problem
             </a>
@@ -127,15 +129,12 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
             <a className="transition hover:text-white" href="#visits">
               Visit types
             </a>
-            <a className="transition hover:text-white" href="#whatsapp">
-              WhatsApp
+            <a className="transition hover:text-white" href="#practice">
+              Practice
             </a>
             <a className="transition hover:text-white" href="#safety">
               Safety
             </a>
-            <button className="transition hover:text-white" onClick={onRecords} type="button">
-              Follow-ups
-            </button>
           </nav>
           <div className="flex items-center gap-2">
             {user ? (
@@ -149,9 +148,9 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
                 </div>
               </div>
             ) : (
-              <button onClick={onSignIn} type="button" className="hidden items-center gap-2 px-3 py-2 text-sm font-bold text-white/80 hover:text-white sm:inline-flex"><UserIcon className="h-4 w-4" /> Sign in</button>
+              <button onClick={onSignIn} type="button" className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap px-2 text-sm font-bold text-white/90 hover:text-white"><UserIcon className="hidden h-4 w-4 sm:block" /> Sign in</button>
             )}
-            <button className="inline-flex items-center gap-2 bg-[#e7b665] px-4 py-2.5 text-sm font-bold text-[#171713] transition hover:bg-[#f0c879]" onClick={onStart} type="button">
+            <button className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#e7b665] px-4 py-2.5 text-sm font-bold text-[#171713] transition hover:bg-[#f0c879]" onClick={onStart} type="button">
               <MicIcon className="h-4 w-4" /> Start a visit
             </button>
           </div>
@@ -160,7 +159,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
 
       <main id="top">
         {/* ---------------------------------------------------------- hero */}
-        <section className="hero-scene relative min-h-[45rem] overflow-hidden border-b border-white/10 bg-[#10110f] text-white">
+        <section className="hero-scene relative overflow-hidden border-b border-white/10 bg-[#10110f] text-white lg:min-h-[38rem]">
           <video
             className="hero-video absolute inset-0 h-full w-full object-cover"
             autoPlay
@@ -168,6 +167,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
             loop
             playsInline
             preload="metadata"
+            poster={`${import.meta.env.BASE_URL}asha-home-visit.jpg`}
             onEnded={(event) => {
               const video = event.currentTarget
               video.currentTime = 0
@@ -175,53 +175,46 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
             }}
             aria-hidden="true"
           >
-            <source src="/swarvani-field.mp4" type="video/mp4" />
+            <source src={`${import.meta.env.BASE_URL}swarvani-field.mp4`} type="video/mp4" />
           </video>
           <div className="hero-video-wash absolute inset-0" />
           <div className="hero-video-vignette absolute inset-0" />
           <div className="field-lines pointer-events-none absolute inset-0 opacity-10" />
-          <div className="mx-auto grid w-full max-w-6xl gap-14 px-5 pb-20 pt-14 lg:grid-cols-[1.06fr_0.94fr] lg:items-center lg:pb-24 lg:pt-20">
+          <div className="hero-content relative mx-auto grid w-full max-w-6xl gap-8 px-5 py-12 sm:px-8 lg:min-h-[38rem] lg:grid-cols-[1.06fr_0.94fr] lg:items-center lg:gap-14 lg:py-20">
             <div className="relative">
               <span className="hero-glow inline-flex items-center gap-2 border border-[#f2c96d]/45 bg-black/45 px-3.5 py-1.5 text-xs font-semibold text-[#ffe08a] backdrop-blur-sm">
                 <span className="h-1.5 w-1.5 rounded-full bg-turmeric" />
-                Healthcare · Gnani Voice Hackathon
+                ASHA visit register · <span lang="hi" className="font-hindi">आशा कार्यकर्ताओं के लिए</span>
               </span>
 
-              <h1 className="mt-6 font-display text-[3.15rem] leading-[0.96] tracking-[-0.035em] sm:text-7xl">
-                Speak the visit.
-                <br />
-                <span className="relative inline-block">
-                <em className="hero-glow relative z-10 font-normal text-[#ffe08a]">Confirm the record.</em>
-                <span className="absolute inset-x-0 bottom-1 z-0 h-3 -rotate-1 bg-[#e7b665]/40" />
-                </span>
-                <br />
-                Know what to do next.
+              <h1 className="mt-5 max-w-xl font-display text-[clamp(2.75rem,7vw,4.8rem)] leading-[0.98] tracking-[-0.035em]">
+                Record a visit <em className="hero-glow font-normal text-[#ffe08a]">with your voice.</em>
               </h1>
+              <p lang="hi" className="mt-4 font-hindi text-xl font-semibold leading-relaxed">बोलकर मुलाक़ात दर्ज करें</p>
 
-              <p className="hero-copy-glow mt-7 max-w-xl text-[15px] leading-relaxed text-white sm:text-base">
-                ASHA workers log antenatal, newborn and immunisation visits by typing on small phone screens or
-                writing in paper registers. SwarVani takes her spoken note — Hinglish, health terms and all —
-                turns it into a structured record, shows it for confirmation, and raises a referral alert the
-                moment a danger sign is spoken.
+              <p className="hero-copy-glow mt-3 max-w-lg text-base leading-relaxed text-white sm:text-lg">
+                Speak or type in Hindi, Hinglish, or English. Review the visit record, save it, and see what needs a follow-up.
               </p>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <button
-                  className="inline-flex items-center justify-center gap-2.5 bg-[#e7b665] px-6 py-3.5 text-sm font-bold text-[#171713] shadow-lg transition hover:bg-[#f0c879]"
+                  className="inline-flex items-center justify-center gap-2.5 rounded-xl bg-[#e7b665] px-6 py-3.5 text-sm font-bold text-[#171713] shadow-lg transition hover:bg-[#f0c879]"
                   onClick={onStart}
                   type="button"
                 >
                   <MicIcon className="h-4 w-4" />
-                  Start a voice visit
+                  <span>Start a visit <span lang="hi" className="block font-hindi text-xs">मुलाक़ात शुरू करें</span></span>
                   <ArrowIcon className="h-4 w-4" />
                 </button>
-                <a
-                  className="inline-flex items-center justify-center gap-2 border border-white/35 bg-black/25 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-black/45"
-                  href="#how"
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/50 bg-black/40 px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-black/60"
+                  onClick={onRecords}
+                  type="button"
                 >
-                  See the pipeline
-                </a>
+                  <span>Open follow-ups <span lang="hi" className="block font-hindi text-xs">अगली मुलाक़ातें देखें</span></span>
+                </button>
               </div>
+              <a className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4" href="#how">How it works</a>
 
               <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium text-white/90">
                 <span className="inline-flex items-center gap-1.5">
@@ -236,7 +229,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
               </div>
             </div>
 
-            <FieldMoment />
+            <div className="hidden lg:block"><FieldMoment /></div>
           </div>
         </section>
 
@@ -331,57 +324,23 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
           </div>
         </section>
 
-        {/* ------------------------------------------------ WhatsApp loop */}
-        <section id="whatsapp" className="border-b border-white/10 bg-[#10110f]">
-          <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 py-16 sm:py-20 lg:grid-cols-[1fr_0.9fr] lg:items-center">
-            <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-[#25d366]/35 bg-[#25d366]/10 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-[#7ff0a5]">
-                <WhatsAppIcon className="h-4 w-4" /> WhatsApp follow-up loop
-              </span>
-              <h2 className="mt-5 max-w-2xl text-3xl font-extrabold leading-tight tracking-tight sm:text-[2.6rem]">
-                Every reply moves the follow-up board.
-              </h2>
-              <p className="mt-4 max-w-xl text-sm font-semibold leading-relaxed text-white/75 sm:text-base">
-                Approved quick replies carry the SwarVani record ID back through a verified webhook. The ASHA queue refreshes automatically without exposing the visit transcript.
+        <section id="practice" className="practice-scene border-b border-white/10">
+          <div className="mx-auto w-full max-w-6xl px-5 pb-10 pt-52 sm:px-8 lg:py-14">
+            <div className="max-w-lg">
+              <p lang="hi" className="font-hindi text-sm font-semibold text-[#ffe08a]">पहले अभ्यास करें</p>
+              <h2 className="mt-2 text-3xl font-extrabold leading-tight sm:text-4xl">Try a practice visit</h2>
+              <p className="mt-4 max-w-lg text-base leading-relaxed text-white/80">
+                Open a visit and tap <strong>Use a sample note</strong>, or say the example aloud. Check the details before you save. Use a made-up name while practising.
               </p>
-              <div className="mt-7 grid gap-3 sm:grid-cols-2">
-                {[
-                  ['Confirmed', 'Visit acknowledged'],
-                  ['Reschedule requested', 'Date needs follow-up'],
-                  ['No response', 'Still waiting'],
-                  ['ASHA callback requested', 'Worker action needed'],
-                ].map(([title, body]) => (
-                  <div key={title} className="border border-white/10 bg-white/5 p-4">
-                    <p className="text-sm font-extrabold text-white">{title}</p>
-                    <p className="mt-1 text-xs font-semibold text-white/55">{body}</p>
-                  </div>
-                ))}
-              </div>
-              <button onClick={onRecords} type="button" className="mt-7 inline-flex items-center gap-2 bg-[#25d366] px-5 py-3 text-sm font-extrabold text-[#082a23] transition hover:bg-[#55df83]">
-                <ListIcon className="h-4 w-4" /> Open synchronized board
+              <figure className="mt-5 rounded-2xl border p-4 sm:p-5">
+                <figcaption className="text-sm font-bold text-[#ffe08a]">Example note · <span lang="hi" className="font-hindi">बोलने का उदाहरण</span></figcaption>
+                <blockquote lang="hi" className="mt-2 font-hindi text-lg leading-relaxed">
+                  “आज सीता की गर्भावस्था की जाँच की। वज़न 52 किलो है। अगली मुलाक़ात अगले महीने की 15 तारीख़ को है।”
+                </blockquote>
+              </figure>
+              <button onClick={onStart} type="button" className="mt-5 inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#e7b665] px-5 text-sm font-bold text-[#171713] hover:bg-[#f0c879]">
+                <MicIcon className="h-5 w-5" /> Open the visit register
               </button>
-            </div>
-
-            <div className="mx-auto w-full max-w-sm rounded-[2rem] border border-white/15 bg-[#0b1712] p-3 shadow-2xl">
-              <div className="overflow-hidden rounded-[1.45rem] bg-[#efe9df] text-[#17211c]">
-                <div className="flex items-center gap-3 bg-[#075e54] px-4 py-3 text-white">
-                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/15"><WhatsAppIcon className="h-5 w-5" /></span>
-                  <div><p className="text-sm font-extrabold">SwarVani follow-up</p><p className="text-[10px] text-white/65">Automated reminder</p></div>
-                </div>
-                <div className="space-y-3 p-4">
-                  <div className="mr-7 rounded-xl rounded-tl-sm bg-white p-4 shadow-sm">
-                    <p className="text-sm font-bold">Namaste Sita ji.</p>
-                    <p className="mt-2 text-xs leading-relaxed text-[#435249]">Aapki agli ANC visit 15 December ko hai. Kripya apna status batayein.</p>
-                    <p className="mt-2 text-[9px] text-[#78857e]">Record SV-••••1234</p>
-                  </div>
-                  {['Confirm', 'Change date', 'Request ASHA call'].map((reply) => (
-                    <div key={reply} className="rounded-lg border border-[#075e54]/15 bg-white px-4 py-2.5 text-center text-xs font-extrabold text-[#087b67]">{reply}</div>
-                  ))}
-                  <div className="flex items-center justify-center gap-2 pt-2 text-[10px] font-bold text-[#66736c]">
-                    <span className="h-2 w-2 rounded-full bg-[#25d366]" /> Reply synchronized to follow-up board
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </section>
@@ -436,7 +395,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
                   </li>
                   <li className="flex gap-3">
                     <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-turmeric" />
-                    No diagnosis, no treatment, no dosage — the alert says “refer to the PHC now”.
+                    An amber alert asks the worker to check now. A red alert flags an urgent referral.
                   </li>
                   <li className="flex gap-3">
                     <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-turmeric" />
@@ -448,18 +407,18 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
               <div className="rounded-card border border-danger/20 bg-paper p-8 sm:p-10">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-danger">
-                    Danger signs checked
+                    Symptoms and urgent signs
                   </p>
                   <span className="rounded-full bg-danger-soft px-2.5 py-1 text-[11px] font-semibold text-danger">
-                    {dangerPreview.length ? `${dangerPreview.length} phrases · guideline references` : 'Guideline-based phrase list'}
+                    Visit screening
                   </span>
                 </div>
                 <ul className="mt-6 divide-y divide-forest/10">
                   {dangerPreview.map((sign) => (
                     <li key={sign.key} className="flex items-center justify-between gap-4 py-2.5 text-sm">
                       <span className="text-ink/80">{sign.labelEn}</span>
-                      <span className="shrink-0 rounded-md bg-danger-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-danger">
-                        {sign.who}
+                      <span className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${sign.level === 'check' ? 'bg-amber-100 text-amber-900' : 'bg-danger-soft text-danger'}`}>
+                        {sign.level === 'check' ? 'Check now' : 'Urgent'}
                       </span>
                     </li>
                   ))}
@@ -490,7 +449,7 @@ export default function Landing({ user, onStart, onRecords, onSignIn, onSignOut 
                 {
                   icon: <ShieldIcon className="h-5 w-5" />,
                   title: 'Mothers and newborns',
-                  body: 'Danger signs surface before she leaves the house, with a clear refer-to-PHC action instead of a missed visit.',
+                  body: 'See which symptoms to check now and which reported signs may need an urgent referral.',
                 },
                 {
                   icon: <ClipboardIcon className="h-5 w-5" />,

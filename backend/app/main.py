@@ -21,7 +21,7 @@ from . import danger_signs
 from .config import settings
 from .gnani import open_stt, parse_stt_message
 from .pipeline import VisitSession
-from .whatsapp import apply_webhook, verify_signature
+from .whatsapp import apply_webhook, verify_signature, send_test_followup
 
 log = logging.getLogger("swarvani")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -121,9 +121,41 @@ async def whatsapp_updates(limit: int = 25) -> dict:
     return {
         "updates": db.whatsapp_updates(limit),
         "summary": db.whatsapp_status_summary(),
+        "simulatorEnabled": settings.demo_mode,
         "webhookConfigured": settings.whatsapp_webhook_ready,
         "sendingConfigured": settings.whatsapp_sending_ready,
     }
+
+
+@app.post("/api/whatsapp/simulate/{record_id}")
+async def simulate_whatsapp_reply(record_id: str, status: str, request: Request) -> dict:
+    if not settings.demo_mode:
+        raise HTTPException(404, "The reply simulator is available in demo mode.")
+    if request.headers.get("X-SwarVani-Test") != "1":
+        raise HTTPException(403, "Use the follow-up board to simulate replies.")
+    labels = {
+        "confirmed": "Confirm",
+        "reschedule_requested": "Reschedule",
+        "asha_callback_requested": "Request ASHA call",
+    }
+    if status not in labels:
+        raise HTTPException(400, "Choose one of the three demo replies.")
+    if not any(item["recordId"] == record_id for item in db.follow_ups()) or not db.update_whatsapp_status(
+        record_id, status, last_reply=f"Simulated reply: {labels[status]}",
+    ):
+        raise HTTPException(404, "Save a visit with a follow-up first.")
+    return {"status": status}
+
+
+@app.post("/api/whatsapp/test-followup/{record_id}")
+async def test_followup(record_id: str, request: Request) -> dict:
+    if request.client is None or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(403, "Test sending is available locally only.")
+    if request.headers.get("X-SwarVani-Test") != "1":
+        raise HTTPException(403, "Use the local follow-up board to send test messages.")
+    if not any(item["recordId"] == record_id for item in db.follow_ups()):
+        raise HTTPException(404, "Save a visit with a follow-up first.")
+    return {"messageId": await send_test_followup(record_id), "status": "accepted"}
 
 
 @app.get("/api/danger-signs")
@@ -131,7 +163,7 @@ async def danger_sign_catalog() -> dict:
     return {
         "source": danger_signs.SOURCE,
         "signs": [
-            {"key": item.key, "labelEn": item.label_en, "labelHi": item.label_hi, "who": item.who}
+            {"key": item.key, "labelEn": item.label_en, "labelHi": item.label_hi, "who": item.who, "level": item.level}
             for item in danger_signs.DANGER_SIGNS
         ],
     }
@@ -180,12 +212,10 @@ async def voice_session(websocket: WebSocket) -> None:
         # speech synthesis can block the visual alert.
         alerted = False
         if message.get("type") in {"utterance", "correct"} and not session.saved:
-            matches = danger_signs.scan(str(message.get("text") or ""))
-            existing = {sign["key"] for sign in session.record.dangerSigns}
-            new = [match for match in matches if match.key not in existing]
-            if new:
-                await send_event({"type": "danger", "signs": session.record.dangerSigns + [m.as_dict() for m in new],
-                                  "message": danger_signs.referral_message(matches), "speak": True})
+            signs = session.updated_findings(str(message.get("text") or ""))
+            if signs is not None:
+                await send_event({"type": "danger", "signs": signs,
+                                  "message": danger_signs.assessment_message(signs), "speak": True})
                 alerted = True
         events = await session.handle(message)
         await send_events([event for event in events if not (alerted and event["type"] == "danger")])

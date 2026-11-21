@@ -21,7 +21,7 @@ from . import danger_signs
 from .config import settings
 from .normalization import latin_name
 from .extract import apply_to_record, extract_heuristic, extract_with_llm
-from .schemas import VisitRecord, empty_record, follow_up_lines, missing_fields, parse_date_hint
+from .schemas import VisitRecord, empty_record, follow_up_lines, missing_fields
 
 MONTHS = (
     "January",
@@ -85,6 +85,8 @@ class VisitSession:
             return await self._correction(str(message.get("text") or ""))
         if kind == "confirm":
             return self._confirm()
+        if kind == "fever_age":
+            return self._set_fever_age(message.get("ageGroup"))
         if kind == "summary":
             return self._summary()
         if kind == "reset":
@@ -122,22 +124,11 @@ class VisitSession:
             return [{"type": "error", "message": "visit already saved"}]
 
         # 1. Deterministic safety pass FIRST, on raw words.
-        matches = danger_signs.scan(text)
+        matches = self.updated_findings(text)
         events: list[dict[str, Any]] = []
 
-        if matches:
-            new_keys = {m.key for m in matches} - {s["key"] for s in self.record.dangerSigns}
-            if new_keys:
-                self.record.dangerSigns.extend(m.as_dict() for m in matches if m.key in new_keys)
-                events.append(
-                    {
-                        "type": "danger",
-                        "signs": self.record.dangerSigns,
-                        "message": danger_signs.referral_message(matches),
-                        "speak": True,
-                        "source": danger_signs.SOURCE,
-                    }
-                )
+        if matches is not None:
+            events.append(self._apply_findings(matches))
 
         # 2. Confirmation intent (only while waiting, and only if it is a bare
         #    "haan") -- otherwise the words are a correction.
@@ -207,19 +198,9 @@ class VisitSession:
         # Voice corrections are also safety-checked: a newly mentioned sign
         # must still escalate.
         events: list[dict[str, Any]] = []
-        matches = danger_signs.scan(text)
-        new = [m for m in matches if m.key not in {s["key"] for s in self.record.dangerSigns}]
-        if new:
-            self.record.dangerSigns.extend(m.as_dict() for m in new)
-            events.append(
-                {
-                    "type": "danger",
-                    "signs": self.record.dangerSigns,
-                    "message": danger_signs.referral_message(matches),
-                    "speak": True,
-                    "source": danger_signs.SOURCE,
-                }
-            )
+        matches = self.updated_findings(text)
+        if matches is not None:
+            events.append(self._apply_findings(matches))
 
         stripped = self._strip_correction_prefix(text)
         patch = self._parse_field_patch(stripped)
@@ -293,20 +274,70 @@ class VisitSession:
         ]
 
     def _summary(self) -> list[dict[str, Any]]:
-        count = len(self.record.dangerSigns)
-        if count:
+        if self.record.dangerSigns:
             text = (
                 f"Aaj ki visit: {self.record.beneficiaryName or 'beneficiary'}. "
-                f"{count} danger sign flag hue hain. PHC referral confirm kijiye."
+                + danger_signs.assessment_message(self.record.dangerSigns)
             )
         else:
             text = (
                 f"Aaj ki visit: {self.record.beneficiaryName or 'beneficiary'}, "
-                f"{self.record.visitType}. Koi danger sign nahi mila."
+                f"{self.record.visitType}. No phrase flagged in the note. Continue the usual visit checks."
             )
         return [{"type": "summary", "text": text, "speak": True, "record": self.record.as_dict()}]
 
     # ----------------------------------------------------------------- helpers
+
+    def _set_fever_age(self, group: Any) -> list[dict[str, Any]]:
+        if group not in ("under_two_months", "two_months_or_older", "unknown"):
+            return [{"type": "error", "message": "Choose one of the listed age groups."}]
+        if self.saved or not any(sign["key"] == "fever" for sign in self.record.dangerSigns):
+            return [{"type": "error", "message": "Age can be set on a fever alert before saving the visit."}]
+
+        young = group == "under_two_months"
+        fever = danger_signs.DANGER_BY_KEY["fever"]
+        signs = [
+            {
+                **sign, "ageGroup": group, "ageConfirmed": True,
+                "level": "urgent" if young else "check",
+                "labelEn": "Fever reported in a young infant" if young else fever.label_en,
+                "labelHi": "Chhote shishu ko bukhar" if young else fever.label_hi,
+                "source": "NHM IMNCI Health Worker Chart Booklet (2023), young infant assessment" if young else fever.source,
+            }
+            if sign["key"] == "fever" else sign
+            for sign in self.record.dangerSigns
+        ]
+        event = self._apply_findings(signs)
+        self.record.followUps = follow_up_lines(self.record)
+        return [
+            event,
+            {"type": "record", "record": self.record.as_dict(), "missing": missing_fields(self.record),
+             "extraction": self.extraction_source, "changed": []},
+        ]
+
+    def updated_findings(self, text: str) -> list[dict[str, Any]] | None:
+        before = {sign["key"]: sign for sign in self.record.dangerSigns}
+        updated = before.copy()
+        matches = danger_signs.scan(text)
+        young_now = danger_signs.has_young_infant_context(text)
+        young_infant = young_now or danger_signs.has_young_infant_context(self.record.transcript)
+        # Permit a later age clarification to escalate a previously reported fever.
+        if young_now and "fever" in before and not any(match.key == "fever" for match in matches):
+            matches.extend(match for match in danger_signs.scan(self.record.transcript) if match.key == "fever")
+        for match in danger_signs.apply_context(matches, young_infant):
+            existing = before.get(match.key)
+            if existing and existing.get("ageConfirmed"):
+                continue
+            if existing is None or (match.level == "urgent" and danger_signs.signal_level(existing) == "check"):
+                updated[match.key] = match.as_dict()
+        return list(updated.values()) if updated != before else None
+
+    def _apply_findings(self, signs: list[dict[str, Any]]) -> dict[str, Any]:
+        self.record.dangerSigns = signs
+        return {
+            "type": "danger", "signs": signs, "message": danger_signs.assessment_message(signs),
+            "speak": True, "source": danger_signs.SOURCE,
+        }
 
     def _is_confirmation(self, text: str) -> bool:
         norm = danger_signs.normalize(text)
@@ -327,7 +358,8 @@ class VisitSession:
     def _readback(self) -> str:
         r = self.record
         parts: list[str] = []
-        parts.append(f"{r.beneficiaryName or 'Beneficiary'}, {r.visitType.lower()} visit.")
+        visit_type = "general" if r.visitType == "OTHER" else r.visitType.lower()
+        parts.append(f"{r.beneficiaryName or 'Naam abhi darj nahi hua'}, {visit_type} visit.")
         if r.beneficiaryId:
             parts.append(f"Beneficiary ID {r.beneficiaryId}.")
         if r.weightKg is not None:
@@ -342,7 +374,13 @@ class VisitSession:
             parts.append(f"{' aur '.join(r.supplements)} di gayi.")
         if r.nextVisit:
             parts.append(f"Agli visit {_fmt_date(r.nextVisit)} ko.")
+            if not r.beneficiaryName:
+                parts.append("Jinse mili unka naam bataiye.")
+        elif not r.beneficiaryName:
+            parts.append("Naam aur agli visit ki tareekh bata sakti hain.")
+        else:
+            parts.append("Agli visit ki tareekh pata ho to bataiye.")
         if r.dangerSigns:
-            parts.append("Danger sign flag laga hai, referral note bhi jod diya.")
+            parts.append("Please review the check-up or referral flag above.")
         parts.append("Sahi hai? Haan ya galat boliye, ya sirf ek field sudhariye.")
         return " ".join(parts)
