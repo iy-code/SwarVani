@@ -200,6 +200,58 @@ def has_young_infant_context(text: str) -> bool:
     return False
 
 
+STATED_AGE = re.compile(
+    r"(?:\bi\s+am|\bi'm|\bthe\s+patient\s+is|^\s*(?:(?:the\s+)?baby\s+is\s+)?)\s*"
+    r"(?P<en_age>[0-9]{1,3})\s+(?P<en_unit>years?|months?|weeks?|days?)\s+old\b|"
+    r"(?:मैं|मै)\s+(?P<hi_age>[0-9]{1,3})\s+(?P<hi_unit>साल|वर्ष|महीने|माह)\s+"
+    r"(?:का|की)\s+(?:हूँ|हूं|हू)(?=\s|[।,.!?]|$)|"
+    r"(?:\bage\s*(?:[:=]|is\s+)?|(?:मरीज़\s+की\s+)?उम्र\s*[:=]?)\s*(?P<label_age>[0-9]{1,3})\s+"
+    r"(?P<label_unit>years?|months?|weeks?|days?|साल|वर्ष|महीने|माह|हफ्ते|सप्ताह|दिन)(?![\w\u0900-\u097F])"
+)
+
+
+AGE_UNIT_DAYS = {"years": 365, "months": 30, "weeks": 7, "days": 1}
+AGE_UNIT_ALIASES = {
+    "साल": "years", "वर्ष": "years", "महीने": "months", "माह": "months",
+    "हफ्ते": "weeks", "सप्ताह": "weeks", "दिन": "days",
+}
+
+
+@dataclass(frozen=True)
+class Age:
+    value: int
+    unit: str
+
+    @property
+    def group(self) -> str:
+        return "under_two_months" if self.value * AGE_UNIT_DAYS[self.unit] < 60 else "two_months_or_older"
+
+
+def valid_age(value: object, unit: object) -> Age | None:
+    if type(value) is not int or not isinstance(unit, str) or unit not in AGE_UNIT_DAYS:
+        return None
+    if (value == 0 and unit == "years") or not 0 <= value * AGE_UNIT_DAYS[unit] <= 130 * 365:
+        return None
+    return Age(value, unit)
+
+
+def stated_age(text: str) -> Age | None:
+    """Recognize a stated age without using durations, weights, or dates."""
+    from .normalization import normalize_numbers
+
+    normalized = normalize_numbers(text.casefold().replace("’", "'"))
+    ages: set[Age] = set()
+    for match in STATED_AGE.finditer(normalized):
+        value = int(match["en_age"] or match["hi_age"] or match["label_age"])
+        unit = match["en_unit"] or match["hi_unit"] or match["label_unit"]
+        if re.match(r"\s+(?:ago|from now|नहीं|नही|nahi)(?![\w\u0900-\u097F])", normalized[match.end():]):
+            continue
+        age = valid_age(value, AGE_UNIT_ALIASES.get(unit, unit if unit.endswith("s") else unit + "s"))
+        if age:
+            ages.add(age)
+    return next(iter(ages)) if len(ages) == 1 else None
+
+
 def apply_context(matches: list[Match], young_infant: bool) -> list[Match]:
     if not young_infant:
         return matches

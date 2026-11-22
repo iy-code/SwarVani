@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
-from .danger_signs import signal_level
+from .danger_signs import Age, signal_level
 
 VISIT_TYPES = ("ANC", "PNC", "IMMUNISATION", "NEWBORN", "GROWTH", "OTHER")
 FIELD_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
@@ -48,6 +48,7 @@ class VisitRecord:
     id: str = field(default_factory=lambda: f"SV-{uuid.uuid4().hex[:8].upper()}")
     beneficiaryName: str | None = None
     beneficiaryId: str | None = None
+    age: Age | None = None
     visitType: str = "OTHER"
     weightKg: float | None = None
     bp: str | None = None

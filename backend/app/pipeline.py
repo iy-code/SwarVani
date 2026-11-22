@@ -87,6 +87,8 @@ class VisitSession:
             return self._confirm()
         if kind == "fever_age":
             return self._set_fever_age(message.get("ageGroup"))
+        if kind == "set_age":
+            return self._set_age(message.get("value"), message.get("unit"))
         if kind == "summary":
             return self._summary()
         if kind == "reset":
@@ -151,6 +153,7 @@ class VisitSession:
                 data["beneficiaryName"] = latin_name(name_only)
         self.extraction_source = source
         changed = apply_to_record(self.record, data)
+        self._capture_age(text, changed)
         self.record.transcript = (self.record.transcript + " " + text).strip()
         self.record.followUps = follow_up_lines(self.record)
         self.utterances.append(text)
@@ -211,6 +214,7 @@ class VisitSession:
             # Fall back to a normal extraction pass, still field-by-field.
             data = extract_heuristic(stripped)
             changed = apply_to_record(self.record, data)
+        self._capture_age(stripped, changed)
 
         self.record.corrections.append({"utterance": text, "changed": changed})
         self.record.transcript = (self.record.transcript + " " + text).strip()
@@ -288,11 +292,35 @@ class VisitSession:
 
     # ----------------------------------------------------------------- helpers
 
+    def _capture_age(self, text: str, changed: list[str]) -> None:
+        age = danger_signs.stated_age(text)
+        if age is not None and age != self.record.age:
+            self.record.age = age
+            changed.append("age")
+
+    def _set_age(self, value: Any, unit: Any) -> list[dict[str, Any]]:
+        age = danger_signs.valid_age(value, unit)
+        if self.saved or self.state != "awaiting_confirmation":
+            return [{"type": "error", "message": "Age can be entered while reviewing an unsaved visit."}]
+        if age is None:
+            return [{"type": "error", "message": "Enter a valid age. For infants, choose months, weeks, or days."}]
+
+        self.record.age = age
+        self.record.corrections.append({"utterance": f"Age set manually: {age.value} {age.unit}", "changed": ["age"]})
+        if any(sign["key"] == "fever" for sign in self.record.dangerSigns):
+            events = self._set_fever_age(age.group)
+            events[-1]["changed"] = ["age"]
+            return events
+        return [{"type": "record", "record": self.record.as_dict(), "missing": missing_fields(self.record),
+                 "extraction": self.extraction_source, "changed": ["age"]}]
+
     def _set_fever_age(self, group: Any) -> list[dict[str, Any]]:
         if group not in ("under_two_months", "two_months_or_older", "unknown"):
             return [{"type": "error", "message": "Choose one of the listed age groups."}]
         if self.saved or not any(sign["key"] == "fever" for sign in self.record.dangerSigns):
             return [{"type": "error", "message": "Age can be set on a fever alert before saving the visit."}]
+        if self.record.age is not None and group != self.record.age.group:
+            return [{"type": "error", "message": "Edit the Age field to update the fever age group."}]
 
         young = group == "under_two_months"
         fever = danger_signs.DANGER_BY_KEY["fever"]
@@ -319,17 +347,31 @@ class VisitSession:
         before = {sign["key"]: sign for sign in self.record.dangerSigns}
         updated = before.copy()
         matches = danger_signs.scan(text)
-        young_now = danger_signs.has_young_infant_context(text)
-        young_infant = young_now or danger_signs.has_young_infant_context(self.record.transcript)
+        new_age = danger_signs.stated_age(text)
+        age = new_age or self.record.age
+        younger_age_stated = new_age is not None and new_age.group == "under_two_months"
+        young_now = younger_age_stated or danger_signs.has_young_infant_context(text)
+        young_infant = (young_now or (age is not None and age.group == "under_two_months")
+                        or danger_signs.has_young_infant_context(self.record.transcript))
         # Permit a later age clarification to escalate a previously reported fever.
         if young_now and "fever" in before and not any(match.key == "fever" for match in matches):
             matches.extend(match for match in danger_signs.scan(self.record.transcript) if match.key == "fever")
         for match in danger_signs.apply_context(matches, young_infant):
             existing = before.get(match.key)
-            if existing and existing.get("ageConfirmed"):
+            if existing and existing.get("ageConfirmed") and not younger_age_stated:
                 continue
             if existing is None or (match.level == "urgent" and danger_signs.signal_level(existing) == "check"):
                 updated[match.key] = match.as_dict()
+        fever = updated.get("fever")
+        if (
+            fever is not None
+            and not fever.get("ageConfirmed")
+            and fever.get("ageGroup") == "unknown"
+            and not young_infant
+            and age is not None
+            and age.group == "two_months_or_older"
+        ):
+            updated["fever"] = {**fever, "ageGroup": "two_months_or_older"}
         return list(updated.values()) if updated != before else None
 
     def _apply_findings(self, signs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -362,6 +404,9 @@ class VisitSession:
         parts.append(f"{r.beneficiaryName or 'Naam abhi darj nahi hua'}, {visit_type} visit.")
         if r.beneficiaryId:
             parts.append(f"Beneficiary ID {r.beneficiaryId}.")
+        if r.age is not None:
+            unit = {"years": "saal", "months": "mahine", "weeks": "hafte", "days": "din"}[r.age.unit]
+            parts.append(f"Umar {r.age.value} {unit}.")
         if r.weightKg is not None:
             parts.append(f"Wajan {_fmt_weight(r.weightKg)}.")
         if r.bp:
