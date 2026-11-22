@@ -6,6 +6,7 @@ export type SessionState =
   | 'saved'
 
 export type FeverAgeGroup = 'under_two_months' | 'two_months_or_older' | 'unknown'
+export type VisitAge = { value: number; unit: 'years' | 'months' | 'weeks' | 'days' }
 
 export type DangerSignInfo = {
   key: string
@@ -23,6 +24,7 @@ export type VisitRecord = {
   id: string
   beneficiaryName: string | null
   beneficiaryId: string | null
+  age?: VisitAge | null
   visitType: string
   weightKg: number | null
   bp: string | null

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DangerSignInfo, ServerEvent, SessionMeta, SessionState, Turn, VisitRecord } from './types'
+import type { DangerSignInfo, ServerEvent, SessionMeta, SessionState, Turn, VisitAge, VisitRecord } from './types'
 import { voiceSocketUrl } from './api'
 
 // ---------------------------------------------------------------------------
@@ -85,8 +85,9 @@ export function useVoiceSession() {
   const releaseMicrophone = useCallback(() => {
     micWanted.current = false
     gnaniMicRef.current = false
-    recognitionRef.current?.abort()
+    const recognition = recognitionRef.current
     recognitionRef.current = null
+    recognition?.abort()
     processorRef.current?.disconnect()
     mutedGainRef.current?.disconnect()
     micStreamRef.current?.getTracks().forEach((track) => track.stop())
@@ -516,8 +517,13 @@ export function useVoiceSession() {
     recognition.lang = metaRef.current?.language ?? 'hi-IN'
     recognition.continuous = true
     recognition.interimResults = true
+    const failRecognition = (message: string) => {
+      releaseMicrophone()
+      setInterim('')
+      setError(message)
+    }
     recognition.onresult = (event) => {
-      if (speakingRef.current) return
+      if (recognitionRef.current !== recognition || speakingRef.current) return
       let finalText = ''
       let interimText = ''
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -533,24 +539,24 @@ export function useVoiceSession() {
       }
     }
     recognition.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        setError('Microphone permission was blocked. Allow the mic or type the note instead.')
-        micWanted.current = false
-        setListening(false)
-      } else if (event.error === 'no-speech') {
-        // normal in a quiet room; keep listening
-      } else if (event.error === 'network') {
-        setError('Speech recognition needs a network connection in this browser.')
+      if (recognitionRef.current !== recognition || !micWanted.current || event.error === 'no-speech') return
+      if (event.error === 'not-allowed') {
+        failRecognition('Microphone permission was blocked. Allow microphone access or type your note below.')
+      } else if (event.error === 'network' || event.error === 'service-not-allowed') {
+        failRecognition('This browser could not reach its speech recognition service. Try speaking again or type your note below.')
+      } else {
+        failRecognition('Speech recognition stopped. Try speaking again or type your note below.')
       }
     }
     recognition.onend = () => {
+      if (recognitionRef.current !== recognition) return
       setListening(false)
       if (micWanted.current && !speakingRef.current) {
         try {
           recognition.start()
           setListening(true)
         } catch {
-          /* give up quietly */
+          failRecognition('Could not restart speech recognition. Try speaking again or type your note below.')
         }
       }
     }
@@ -561,7 +567,7 @@ export function useVoiceSession() {
       setListening(true)
       setError('')
     } catch {
-      setError('Could not start the microphone.')
+      failRecognition('Could not start the microphone. Try speaking again or type your note below.')
     }
   }, [connect, sendRaw, submitText, releaseMicrophone, clearSpeechQueue])
 
@@ -619,6 +625,7 @@ export function useVoiceSession() {
     toggleMute,
     submitText,
     setFeverAge: (ageGroup: import('./types').FeverAgeGroup) => sendRaw({ type: 'fever_age', ageGroup }),
+    setAge: (age: VisitAge) => sendRaw({ type: 'set_age', ...age }),
     confirm,
     requestSummary,
     restart,
